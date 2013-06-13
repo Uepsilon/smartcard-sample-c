@@ -11,18 +11,18 @@
 int     checkSCardResult  (char*              method_name,
                            LONG               result);
 
-void    runCmd            (SCARDHANDLE        card,
+DWORD   runCmd            (SCARDHANDLE        card,
                            SCARD_IO_REQUEST   *protStruct,
                            BYTE               *cmd,
                            DWORD              cmdLen,
                            BYTE               *receiveBuffer,
                            DWORD              receiveBufferLen);
 
-int     checkCardResult   (BYTE               *receiveBuffer,
+int     checkCardResponse (BYTE               *receiveBuffer,
                            DWORD              receiveBufferLen);
 
 /**************************/
-/******** DEFINES** *******/
+/***** GLOBAL DEFINES *****/
 /**************************/
 #define MAX_READERS                 1
 #define MAX_RECEIVE_BUFFER_LENGTH   125
@@ -31,19 +31,19 @@ int     checkCardResult   (BYTE               *receiveBuffer,
 int main(void)
 {
 
-  LONG          rv;             // For the Result of SC-Methods
+  LONG          rv;             /* For the Result of SC-Methods */
 
-  SCARDCONTEXT  cardContext;    // Context for Methods
-  SCARDHANDLE   card;           // The SmartCard-Handle
+  SCARDCONTEXT  cardContext;    /* Context for Methods */
+  SCARDHANDLE   card;           /* The SmartCard-Handle */
 
   BYTE          cardAtr[MAX_ATR_SIZE];
-  DWORD         cardAtrLen;     // Length of card attributes
-  DWORD         cardStatus;     // Status of card (inserted, etc.)
-  DWORD         usedProtocol;   // Information about the Protocol used
+  DWORD         cardAtrLen;     /* Length of card attributes */
+  DWORD         cardStatus;     /* Status of card (inserted, etc.) */
+  DWORD         usedProtocol;   /* Information about the Protocol used */
 
   LPSTR         foundReaders;
-  DWORD         readersLen;                 // Length of readers
-  char          *readersList[MAX_READERS];  // Pointerlist of all Readers
+  DWORD         readersLen;                 /* Length of readers */
+  char          *readersList[MAX_READERS];  /* Pointerlist of all Readers */
   BYTE          readerName[MAX_READERNAME];
 
   int           i;
@@ -58,7 +58,7 @@ int main(void)
   /* cmds */
   BYTE cmdReadUID[] = {0xFF, 0xCA, 0x00, 0x00, 0x00};
 
-  // Establish Context ~> Has to be the first thing to do!
+  /* Establish Context ~> Has to be the first thing to do!*/
   rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, NULL, NULL, &cardContext);
   if ( rv != SCARD_S_SUCCESS)
   {
@@ -66,7 +66,7 @@ int main(void)
     return 1;
   }
 
-  // Get List of all available Readersprintf("CMD: ");
+  /* Get List of all available Readers */
   rv = SCardListReaders(cardContext, NULL, NULL, &readersLen);
   if (rv != SCARD_S_SUCCESS)
   {
@@ -127,25 +127,32 @@ int main(void)
     printf(" State: 0x%lX\n", cardStatus);
     printf(" Prot: %ld\n", usedProtocol);
     printf(" ATR (length %ld bytes):", cardAtrLen);
-    for (i=0; i<cardAtrLen; i++)
+    for (i = 0; i < cardAtrLen; i++)
       printf(" %02X", cardAtr[i]);
     printf("\n");
   }
 
   /* Read UID from Card */
-  runCmd(card, &protStruct, cmdReadUID, sizeof(cmdReadUID), receiveBuffer, sizeof(receiveBuffer));
+  receiveBufferLen = runCmd(card, &protStruct, cmdReadUID, sizeof(cmdReadUID), receiveBuffer, sizeof(receiveBufferLen));
+  if ( receiveBufferLen > 0 )
+  {
+    printf("Card-UID: ");
+    for(i = 0; i < receiveBufferLen; i++)
+    {
+      printf("%d", receiveBuffer[i]);
+    }
+    printf("\n");
+  }
 
 
 
   /* Disconnect Card */
   rv = SCardDisconnect(card, SCARD_UNPOWER_CARD);
-  checkSCardResult("SCardDisconnect", rv);
 
   /* Release Context */
   rv = SCardReleaseContext(cardContext);
-  checkSCardResult("SCardReleaseContext", rv);
 
-  // Release allocated Memory for the Readers
+  /* Release allocated Memory for the Readers */
   free(foundReaders);
 
   return 0;
@@ -162,54 +169,61 @@ int main(void)
  * param[OUT]     receiveBuffer       Pointer to the current ReceiveBuffer
  * param[IN/OUT]  receiveBufferLen    Max length of the ReceiveBuffer
  *
- * return         None
+ * return         receiveBufferLen
  */
-void runCmd(SCARDHANDLE card, SCARD_IO_REQUEST *protStruct, BYTE *cmd, DWORD cmdLen, BYTE *receiveBuffer, DWORD receiveBufferLen)
+DWORD runCmd(SCARDHANDLE card, SCARD_IO_REQUEST *protStruct, BYTE *cmd, DWORD cmdLen, BYTE *receiveBuffer, DWORD receiveBufferLen)
 {
-  LONG          rv;             // For the Result of SC-Methods
+  LONG          rv;             /* For the Result of SC-Methods */
   int i;
 
   rv = SCardTransmit(card, protStruct, cmd, cmdLen, protStruct, receiveBuffer, &receiveBufferLen);
 
   printf("\nSending CMD: ");
-  for(i=0; i < cmdLen; i++)
+  for(i = 0; i < cmdLen; i++)
     printf(" %02X", cmd[i]);
   printf("\n");
 
   if (rv == SCARD_S_SUCCESS )
   {
-    if ( checkCardResult(receiveBuffer, receiveBufferLen) )
+    if ( checkCardResponse(receiveBuffer, receiveBufferLen) )
     {
       receiveBufferLen -= 2;
 
       printf("Result (HEX): ");
-      for(i=0; i < receiveBufferLen; i++)
+      for(i = 0; i < receiveBufferLen; i++)
         printf(" %02X", receiveBuffer[i]);
-      printf("\n");
-      printf("Result (DEC): ");
-      for(i=0; i<receiveBufferLen; i++)
-        printf("%d", receiveBuffer[i]);
-      printf("\n");
+      printf("\n\n");
     }
     else
     {
       printf("Result from Card != SUCCESS\n");
+
+      /* empty receiveBufferLen so the Result is invalid */
+      receiveBufferLen = 0;
     }
-
-
   }
   else
   {
     checkSCardResult("SCardTransmit", rv);
   }
+
+  return receiveBufferLen;
 }
 
-int checkCardResult(BYTE *receiveBuffer, DWORD receiveBufferLen)
+/*
+ * Validates the Response from the Card
+ *
+ * param[IN]      receiveBuffer       Pointer to the current ReceiveBuffer
+ * param[IN]      receiveBufferLen    Max length of the ReceiveBuffer
+ *
+ * return         resultValid         1 if Result is Valid (sw1 is 0x90, sw2 is 0x00)
+ */
+int checkCardResponse(BYTE *receiveBuffer, DWORD receiveBufferLen)
 {
   int resultValid = 0;
 
-  if ( ( receiveBuffer[receiveBufferLen-2] == 0x90 ) &&
-       ( receiveBuffer[receiveBufferLen-1] == 0x00 ) )
+  if ( ( receiveBuffer[(receiveBufferLen - 2)] == 0x90 ) &&
+       ( receiveBuffer[(receiveBufferLen - 1)] == 0x00 ) )
   {
     resultValid = 1;
   }
@@ -231,13 +245,13 @@ int checkSCardResult(char* method_name, LONG result)
 
   if ( result != SCARD_S_SUCCESS )
   {
-    // something went wrong
+    /* something went wrong */
     printf("%s: %s\n", method_name, pcsc_stringify_error(result));
     ret_val = 0;
   }
   else
   {
-    // all Good
+    /* all Good */
     printf("%s: Result OK\n", method_name);
     ret_val = 1;
   }
